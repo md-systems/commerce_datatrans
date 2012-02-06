@@ -21,7 +21,7 @@ function commerce_datatrans_commerce_payment_method_info() {
     'active' => TRUE,
     'terminal' => FALSE,
     'offsite' => TRUE,
-    'offsite_autoredirect' => 5,
+    'offsite_autoredirect' => TRUE,
   );
 
   return $payment_methods;
