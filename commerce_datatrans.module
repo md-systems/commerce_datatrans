@@ -39,9 +39,11 @@ function commerce_datatrans_settings_form($settings = NULL) {
 	
   $settings += array(
     'merchant_id' => '1000011011',
-    'up_start_url' => 'https://payment.datatrans.biz/upp/jsp/upStart.jsp',
+    'up_start_url' => 'https://pilot.datatrans.biz/upp/jsp/upStart.jsp',
   	'req_type' => 'CAA',
   );
+  if (!isset($settings['security']) || !is_array($settings['security']))
+    $settings['security'] = array();
   $settings['security'] += array(
     'security_level' => 2,
     'merchant_control_constant' => '',
