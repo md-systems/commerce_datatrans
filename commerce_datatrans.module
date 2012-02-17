@@ -49,7 +49,7 @@ function commerce_datatrans_settings_form($settings = NULL) {
     'security_level' => 2,
     'merchant_control_constant' => '',
     'hmac_key' => '',
-    'hmac_key2' => '',
+    'hmac_key_2' => '',
     'use_hmac_2' => FALSE,
   );
 
@@ -275,50 +275,6 @@ function commerce_datatrans_redirect_form_submit($order, $payment_method) {
 		return;
 	}
 	_commerce_datatrans_transaction_save($payment_method, $order, $_POST, COMMERCE_PAYMENT_STATUS_SUCCESS);
-}
-
-/**
- * Payment method callback; generation callback for the payment submission form.
- *
- * @param $payment_method
- *   An array of the current settings.
- * @param $pane_values
- *   The current values of the pane.
- * @param $checkout_pane
- *   The checkout pane array. The checkout pane will be NULL if the payment is
- *   being added through the administration form.
- * @param $order
- *   The order object.
- * @return
- *   A form snippet for the checkout pane.
- */
-function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
-		return array();
-}
-
-/**
- * Payment method callback; validate callback for the payment submission form.
- *
- * @param $payment_method
- *   An array of the current settings.
- * @param $pane_form
- *   The pane form.
- * @param $pane_values
- *   The current values of the pane.
- * @param $order
- *   The order object.
- * @param $form_parents
- *   The identifier of the base element of the payment pane.
- */
-function commerce_datatrans_submit_form_validate($payment_method, $pane_form, $pane_values, $order, $form_parents = array()) {
-	return TRUE;
-}
-
-
-/**
- * Payment method callback: submit form submission.
- */
-function commerce_datatrans_submit_form_submit($payment_method, $pane_form, $pane_values, $order, $charge) {
 }
 
 function _commerce_datatrans_get_transaction($order, $create=TRUE) {
