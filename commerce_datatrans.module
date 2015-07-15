@@ -334,6 +334,13 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
 
   $form = array();
   if ($payment_method['settings']['payment_mode'] == 'lightbox') {
+    // Update payment redirect key.
+    if (!array_key_exists('payment_redirect_key', $order->data)) {
+      $order->status = 'checkout_payment';
+      $order->data['payment_redirect_key'] = drupal_hash_base64(time() . uniqid());
+      commerce_order_save($order);
+    }
+
     // Get order total.
     $total = field_get_items('commerce_order', $order, 'commerce_order_total');
 
@@ -359,9 +366,9 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
         'data-currency'    => $total[0]['currency_code'],
         'data-refno'       => $order->order_id,
         'data-language'    => $language->language,
-        // 'data-success-url' => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
-        // 'data-error-url' => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
-        // 'data-cancel-url' => url('checkout/' . $order->order_id . '/payment/back/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+        'data-success-url' => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+        'data-error-url'   => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+        'data-cancel-url'  => url('checkout/' . $order->order_id . '/payment/back/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
         'data-sign'        => $sign,
       ),
       '#attached'   => array(
