@@ -323,74 +323,113 @@ function _commerce_datatrans_transaction_save($payment_method, $order, $data, $s
 function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
   global $language;
 
-  if (!_commerce_datatrans_settings_ok($payment_method['settings'])) {
-    return;
-  }
-
-  // Set default value, prevent errors.
+  // Set default value to prevent errors.
   if (!array_key_exists('payment_mode', $payment_method['settings'])) {
     $payment_method['settings']['payment_mode'] = 'redirect';
   }
 
-  $form = array();
   if ($payment_method['settings']['payment_mode'] == 'lightbox') {
-    // Update payment redirect key.
-    if (!array_key_exists('payment_redirect_key', $order->data)) {
-      $order->data['payment_redirect_key'] = drupal_hash_base64(time() . uniqid());
+
+    if (!_commerce_datatrans_settings_ok($payment_method['settings'])) {
+      return;
+    }
+
+    // On payment success, update transaction details and order status.
+    if (isset($_POST['status']) && $_POST['status'] == 'success' && $order->data['payment_redirect_key'] == arg(3)) {
+      // @todo Instance ID is missing for some reason!
+      $payment_method['instance_id'] = 'commerce_datatrans|commerce_payment_commerce_datatrans';
+
+      // Transaction save.
+      _commerce_datatrans_transaction_save($payment_method, $order, $_POST, COMMERCE_PAYMENT_STATUS_SUCCESS);
+
+      // Update order status.
+      $order->status = 'checkout_complete';
       commerce_order_save($order);
     }
 
-    // Get order total.
-    $total = field_get_items('commerce_order', $order, 'commerce_order_total');
-
-    // Get sign string.
-    $sign = FALSE;
-    switch ($payment_method['settings']['security']['security_level']) {
-      case 1:
-        $sign = $payment_method['settings']['security']['merchant_control_constant'];
-        break;
-      case 2:
-        $sign = hash_hmac('md5', $payment_method['settings']['merchant_id'] . $total[0]['amount'] . $total[0]['currency_code'] . $order->order_id, pack("H*", $payment_method['settings']['security']['hmac_key']));
-        break;
+    // Show error message if payment fails.
+    if (isset($_POST['status']) && $_POST['status'] == 'error') {
+      watchdog('commerce_datatrans', 'An error occurred while settling the payment: @error.', array('@error' => $_POST['errorDetail']), WATCHDOG_ERROR);
+      drupal_set_message(t('An error occurred while settling the payment: @error.', array('@error' => $_POST['errorDetail'])), 'error');
     }
 
-    // Pay button.
-    $form['pay'] = array(
-      '#type'       => 'submit',
-      '#value'      => t('Pay'),
-      '#attributes' => array(
-        'id'               => 'paymentButton',
-        'data-merchant-id' => $payment_method['settings']['merchant_id'],
-        'data-amount'      => $total[0]['amount'],
-        'data-currency'    => $total[0]['currency_code'],
-        'data-refno'       => $order->order_id,
-        'data-language'    => $language->language,
-        'data-success-url' => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
-        'data-error-url'   => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
-        'data-cancel-url'  => url('checkout/' . $order->order_id . '/payment/back/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
-        'data-sign'        => $sign,
-      ),
-      '#attached'   => array(
-        'js' => array(
-          array(
-            'data' => 'https://code.jquery.com/jquery-1.11.2.min.js',
-            'type' => 'external',
-          ),
-          array(
-            'data' => 'https://pilot.datatrans.biz/upp/payment/js/datatrans-1.0.0.js',
-            'type' => 'external',
-          ),
-          array(
-            'data'  => '$("#paymentButton").click(function () {$("form").submit(function (e) {e.preventDefault();}); Datatrans.startPayment({"form": "#paymentButton"});});',
-            'type'  => 'inline',
-            'scope' => 'footer',
+    // Check order status in order to know whether to display Pay button or not.
+    if (in_array($order->status, array('checkout_checkout', 'checkout_review', 'checkout_payment'))) {
+
+      // Update payment redirect key.
+      if (!array_key_exists('payment_redirect_key', $order->data)) {
+        $order->data['payment_redirect_key'] = drupal_hash_base64(time() . uniqid());
+        commerce_order_save($order);
+      }
+
+      // Get order total.
+      $total = field_get_items('commerce_order', $order, 'commerce_order_total');
+
+      // Get sign string.
+      $sign = FALSE;
+      switch ($payment_method['settings']['security']['security_level']) {
+        case 1:
+          $sign = $payment_method['settings']['security']['merchant_control_constant'];
+          break;
+        case 2:
+          $sign = hash_hmac('md5', $payment_method['settings']['merchant_id'] . $total[0]['amount'] . $total[0]['currency_code'] . $order->order_id, pack("H*", $payment_method['settings']['security']['hmac_key']));
+          break;
+      }
+
+      // Pay button.
+      $form['pay'] = array(
+        '#type'       => 'submit',
+        '#value'      => t('Pay with Datatrans'),
+        '#prefix'     => '<div class="checkout-buttons">',
+        '#suffix'     => '</div>',
+        '#attributes' => array(
+          'id'               => 'paymentButton',
+          'class'            => array('checkout-continue'),
+          'data-merchant-id' => $payment_method['settings']['merchant_id'],
+          'data-amount'      => $total[0]['amount'],
+          'data-currency'    => $total[0]['currency_code'],
+          'data-refno'       => $order->order_id,
+          'data-language'    => $language->language,
+          'data-success-url' => url('checkout/' . $order->order_id . '/review/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+          'data-error-url'   => url('checkout/' . $order->order_id . '/review/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+          'data-cancel-url'  => url('checkout/' . $order->order_id . '/review/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+          'data-sign'        => $sign,
+        ),
+        '#attached'   => array(
+          'js' => array(
+            array(
+              'data' => 'https://code.jquery.com/jquery-1.11.2.min.js',
+              'type' => 'external',
+            ),
+            array(
+              'data' => 'https://pilot.datatrans.biz/upp/payment/js/datatrans-1.0.0.js',
+              'type' => 'external',
+            ),
+            array(
+              'data'  => '$("#paymentButton").click(function () {$("form").submit(function (e) {e.preventDefault();}); Datatrans.startPayment({"form": "#paymentButton"});});',
+              'type'  => 'inline',
+              'scope' => 'footer',
+            ),
           ),
         ),
-      ),
-    );
-  }
+      );
 
-  return $form;
+      return $form;
+    }
+    else {
+      drupal_set_message(t('Payment is successful. Please proceed to the next step.'));
+    }
+  }
+}
+
+/**
+ * Payment method callback: submit form validate.
+ */
+function commerce_datatrans_submit_form_validate($payment_method, $pane_form, $pane_values, $order, $form_parents = array()) {
+  if ($order->status != 'checkout_complete' && $payment_method['settings']['payment_mode'] == 'lightbox') {
+    form_set_error('commerce_payment', t('Please click on @pay button in order to proceed.', array('@pay' => t('Pay with Datatrans'))));
+    return FALSE;
+  }
 }
 
 /**
