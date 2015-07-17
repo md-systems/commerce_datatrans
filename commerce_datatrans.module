@@ -148,6 +148,12 @@ function commerce_datatrans_redirect_form($form, &$form_state, $order, $payment_
     return;
   }
 
+  // If the payment mode is lightbox, then skip the redirect form.
+  if ($payment_method['settings']['payment_mode'] == 'lightbox') {
+    commerce_payment_redirect_pane_next_page($order);
+    drupal_goto(commerce_checkout_order_uri($order));
+  }
+
   $total = field_get_items('commerce_order', $order, 'commerce_order_total');
 
   // Datatrans get default gateway.
@@ -306,11 +312,11 @@ function _commerce_datatrans_get_transaction($order, $create = TRUE) {
 function _commerce_datatrans_transaction_save($payment_method, $order, $data, $status) {
 
   $transaction = _commerce_datatrans_get_transaction($order);
-  $transaction->instance_id = $payment_method['instance_id'];
+  $transaction->instance_id = isset($payment_method['instance_id']) ? $payment_method['instance_id'] : '';
   $transaction->amount = $data['amount'];
   $transaction->currency_code = $data['currency'];
   $transaction->status = $status;
-  $transaction->remote_id = $order->data['payment_redirect_key'];
+  $transaction->remote_id = $data['uppTransactionId'];
   $transaction->payload[REQUEST_TIME] = $data;
   unset($transaction->data['error handled']);
 
@@ -337,25 +343,22 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
     // On payment success, update transaction details and order status.
     if (isset($_POST['status']) && $_POST['status'] == 'success' && $order->data['payment_redirect_key'] == arg(3)) {
       // @todo Instance ID is missing for some reason!
-      $payment_method['instance_id'] = 'commerce_datatrans|commerce_payment_commerce_datatrans';
+      //$payment_method['instance_id'] = 'commerce_datatrans|commerce_payment_commerce_datatrans';
 
-      // Transaction save.
-      _commerce_datatrans_transaction_save($payment_method, $order, $_POST, COMMERCE_PAYMENT_STATUS_SUCCESS);
+      if (commerce_datatrans_redirect_form_validate($order, $payment_method)) {
+        // Transaction save.
+        _commerce_datatrans_transaction_save($payment_method, $order, $_POST, COMMERCE_PAYMENT_STATUS_SUCCESS);
 
-      // Update order status.
-      $order->status = 'checkout_complete';
-      commerce_order_save($order);
+        // Send the customer on to the next checkout page.
+        commerce_payment_redirect_pane_next_page($order, t('Customer successfully submitted payment at the payment gateway.'));
+        drupal_goto(commerce_checkout_order_uri($order));
+      }
+
     }
 
-    // Show error message if payment fails.
-    if (isset($_POST['status']) && $_POST['status'] == 'error') {
-      watchdog('commerce_datatrans', 'An error occurred while settling the payment: @error.', array('@error' => $_POST['errorDetail']), WATCHDOG_ERROR);
-      drupal_set_message(t('An error occurred while settling the payment: @error.', array('@error' => $_POST['errorDetail'])), 'error');
-    }
-
-    // Check order status in order to know whether to display Pay button or not.
-    if (in_array($order->status, array('checkout_checkout', 'checkout_review', 'checkout_payment'))) {
-
+    // Check balance in order to know whether to display Pay button or not.
+    $balance = commerce_payment_order_balance($order);
+    if ($balance['amount'] > 0) {
       // Update payment redirect key.
       if (!array_key_exists('payment_redirect_key', $order->data)) {
         $order->data['payment_redirect_key'] = drupal_hash_base64(time() . uniqid());
@@ -398,18 +401,10 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
         '#attached'   => array(
           'js' => array(
             array(
-              'data' => 'https://code.jquery.com/jquery-1.11.2.min.js',
-              'type' => 'external',
-            ),
-            array(
               'data' => 'https://pilot.datatrans.biz/upp/payment/js/datatrans-1.0.0.js',
               'type' => 'external',
             ),
-            array(
-              'data'  => '$("#paymentButton").click(function () {$("form").submit(function (e) {e.preventDefault();}); Datatrans.startPayment({"form": "#paymentButton"});});',
-              'type'  => 'inline',
-              'scope' => 'footer',
-            ),
+            drupal_get_path('module', 'commerce_datatrans') . '/commerce_datatrans.js',
           ),
         ),
       );
@@ -426,7 +421,7 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
  * Payment method callback: submit form validate.
  */
 function commerce_datatrans_submit_form_validate($payment_method, $pane_form, $pane_values, $order, $form_parents = array()) {
-  if ($order->status != 'checkout_complete' && $payment_method['settings']['payment_mode'] == 'lightbox') {
+  if (!_commerce_datatrans_get_transaction($order, FALSE) && $payment_method['settings']['payment_mode'] == 'lightbox') {
     form_set_error('commerce_payment', t('Please click on @pay button in order to proceed.', array('@pay' => t('Pay with Datatrans'))));
     return FALSE;
   }
