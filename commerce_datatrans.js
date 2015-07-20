@@ -4,14 +4,15 @@
     attach: function (context, settings) {
 
 
-      $("#paymentButton", context)
-        .click(function () {
+      $("#paymentButton", context).once('datatrans', function() {
+        $(this).click(function () {
           $("form").submit(function (e) {
             e.preventDefault();
           });
 
           Datatrans.startPayment({"form": "#paymentButton"});
         });
+      })
     }
   };
 
