@@ -150,7 +150,7 @@ function commerce_datatrans_redirect_form($form, &$form_state, $order, $payment_
 
   // If the payment mode is lightbox, then skip the redirect form.
   if ($payment_method['settings']['payment_mode'] == 'lightbox') {
-    commerce_payment_redirect_pane_next_page($order);
+    commerce_datarans_redirect_pane_next_page($order);
     drupal_goto(commerce_checkout_order_uri($order));
   }
 
@@ -350,7 +350,7 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
         _commerce_datatrans_transaction_save($payment_method, $order, $_POST, COMMERCE_PAYMENT_STATUS_SUCCESS);
 
         // Send the customer on to the next checkout page.
-        commerce_payment_redirect_pane_next_page($order, t('Customer successfully submitted payment at the payment gateway.'));
+        commerce_datarans_redirect_pane_next_page($order, t('Customer successfully submitted payment at the payment gateway.'));
         drupal_goto(commerce_checkout_order_uri($order));
       }
 
@@ -413,6 +413,35 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
     }
     else {
       drupal_set_message(t('Payment is successful. Please proceed to the next step.'));
+    }
+  }
+}
+
+/**
+ * Moves an order ahead to the next page via an order update and redirect.
+ *
+ * Redirected payment methods are responsible for calling this method when
+ * receiving external notifications of successful payment.
+ *
+ * @param $order
+ *   An order object.
+ * @param $log
+ *   Optional log message to use when updating the order status in conjunction
+ *   with the redirect to the next checkout page.
+ */
+function commerce_datarans_redirect_pane_next_page($order, $log = '') {
+  // Load the order status object for the current order.
+  $order_status = commerce_order_status_load($order->status);
+
+  if ($order_status['state'] == 'checkout') {
+    $payment_page = commerce_checkout_page_load($order_status['checkout_page']);
+    $next_page = $payment_page['next_page'];
+
+    $order = commerce_order_status_update($order, 'checkout_' . $next_page, FALSE, NULL, $log);
+
+    // Inform modules of checkout completion if the next page is Completed.
+    if ($next_page == 'complete') {
+      commerce_checkout_complete($order);
     }
   }
 }
