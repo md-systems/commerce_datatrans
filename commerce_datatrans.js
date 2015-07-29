@@ -13,7 +13,15 @@
 
           Datatrans.startPayment({"form": "#paymentButton"});
         });
-      })
+
+        if ($('#paymentButton').length) {
+          $('#edit-buttons').hide();
+        }
+      });
+
+      if (!$('#paymentButton').length) {
+        $('#edit-buttons').show();
+      }
     }
   };
 
