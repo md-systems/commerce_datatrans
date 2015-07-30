@@ -367,6 +367,24 @@ function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout
         commerce_order_save($order);
       }
 
+      // @todo Check this with commerce developers.
+      // Normally, if this payment method is not the first in the list,
+      // $pane_values['payment_method'] will contain the payment method instance ID.
+      // This is an ugly way to get to the instance ID of the first payment method
+      // in the list, but in that case $pane_values is empty.
+      if (!isset($pane_values['payment_method'])) {
+        // Invoke the payment methods event that will populate the order with
+        // an array of method IDs for available payment methods.
+        $order->payment_methods = array();
+        rules_invoke_all('commerce_payment_methods', $order);
+
+        // Sort the payment methods array by the enabling Rules' weight values.
+        uasort($order->payment_methods, 'drupal_sort_weight');
+
+        // And get first key from $order->payment_methods.
+        $pane_values['payment_method'] = key($order->payment_methods);
+      }
+
       // Get order total.
       $total = field_get_items('commerce_order', $order, 'commerce_order_total');
 
