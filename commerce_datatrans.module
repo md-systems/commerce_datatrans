@@ -2,9 +2,26 @@
 
 /**
  * @file
- * Provides an example payment method for Drupal Commerce for testing and
- *   development.
+ * Process payments using Datatrans Payment Page.
+ *
+ * For API reference see https://www.datatrans.ch/en/technics/payment-apis/payment-pages/
  */
+
+/**
+ * Implements hook_menu().
+ */
+function commerce_datatrans_menu() {
+  $items['commerce_datatrans/processing/%/%/%'] = array(
+    'title' => 'Datatrans payment processing',
+    'page callback' => 'commerce_datatrans_payment_processing',
+    'page arguments' => array(2, 3, 4),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'commerce_datatrans.pages.inc',
+  );
+
+  return $items;
+}
 
 /**
  * Implements hook_commerce_payment_method_info().
@@ -40,6 +57,7 @@ function commerce_datatrans_settings_form($settings = NULL) {
     'merchant_id' => '1000011011',
     'up_start_url' => 'https://pilot.datatrans.biz/upp/jsp/upStart.jsp',
     'req_type' => 'CAA',
+    'payment_mode' => 'redirect',
     'security' => array(),
   );
   if (!isset($settings['security']) || !is_array($settings['security'])) {
@@ -76,6 +94,17 @@ function commerce_datatrans_settings_form($settings = NULL) {
       'ignore' => t('According to the setting in the Web Admin Tool'),
     ),
     '#default_value' => $settings['req_type'],
+  );
+
+  $form['payment_mode'] = array(
+    '#type' => 'select',
+    '#title' => t('Payment Mode'),
+    '#options' => array(
+      'redirect' => t('Redirect'),
+      'lightbox' => t('Lightbox'),
+    ),
+    '#default_value' => $settings['payment_mode'],
+    '#description' => t('Supports redirect and lightbox payment modes, !payment_pages you can find more information about it. Note: Lightbox mode requires at least JQuery 1.8 or higher.', array('!payment_pages' => l(t('here'), 'https://www.datatrans.ch/en/technics/payment-apis/payment-pages/', array('external' => TRUE, 'attributes' => array('target'=>'_blank'))))),
   );
 
   $form['security'] = array(
@@ -135,6 +164,12 @@ function commerce_datatrans_redirect_form($form, &$form_state, $order, $payment_
 
   if (!_commerce_datatrans_settings_ok($payment_method['settings'])) {
     return;
+  }
+
+  // If the payment mode is lightbox, then skip the redirect form.
+  if ($payment_method['settings']['payment_mode'] == 'lightbox') {
+    commerce_datarans_redirect_pane_next_page($order);
+    drupal_goto(commerce_checkout_order_uri($order));
   }
 
   $total = field_get_items('commerce_order', $order, 'commerce_order_total');
@@ -295,15 +330,151 @@ function _commerce_datatrans_get_transaction($order, $create = TRUE) {
 function _commerce_datatrans_transaction_save($payment_method, $order, $data, $status) {
 
   $transaction = _commerce_datatrans_get_transaction($order);
-  $transaction->instance_id = $payment_method['instance_id'];
+  $transaction->instance_id = isset($payment_method['instance_id']) ? $payment_method['instance_id'] : '';
   $transaction->amount = $data['amount'];
   $transaction->currency_code = $data['currency'];
   $transaction->status = $status;
-  $transaction->remote_id = $order->data['payment_redirect_key'];
+  $transaction->remote_id = $data['uppTransactionId'];
   $transaction->payload[REQUEST_TIME] = $data;
   unset($transaction->data['error handled']);
 
   commerce_payment_transaction_save($transaction);
+}
+
+/**
+ * Payment method callback: submit form.
+ */
+function commerce_datatrans_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
+  global $language;
+
+  // Set default value to prevent errors.
+  if (!array_key_exists('payment_mode', $payment_method['settings'])) {
+    $payment_method['settings']['payment_mode'] = 'redirect';
+  }
+
+  if ($payment_method['settings']['payment_mode'] == 'lightbox') {
+
+    if (!_commerce_datatrans_settings_ok($payment_method['settings'])) {
+      return;
+    }
+
+    // Check balance in order to know whether to display Pay button or not.
+    $balance = commerce_payment_order_balance($order);
+    if ($balance['amount'] > 0) {
+      // Update payment redirect key.
+      if (!array_key_exists('payment_redirect_key', $order->data)) {
+        $order->data['payment_redirect_key'] = drupal_hash_base64(time() . uniqid());
+        commerce_order_save($order);
+      }
+
+      // @todo Check this with commerce developers.
+      // Normally, if this payment method is not the first in the list,
+      // $pane_values['payment_method'] will contain the payment method instance ID.
+      // This is an ugly way to get to the instance ID of the first payment method
+      // in the list, but in that case $pane_values is empty.
+      if (!isset($pane_values['payment_method'])) {
+        // Invoke the payment methods event that will populate the order with
+        // an array of method IDs for available payment methods.
+        $order->payment_methods = array();
+        rules_invoke_all('commerce_payment_methods', $order);
+
+        // Sort the payment methods array by the enabling Rules' weight values.
+        uasort($order->payment_methods, 'drupal_sort_weight');
+
+        // And get first key from $order->payment_methods.
+        $pane_values['payment_method'] = key($order->payment_methods);
+      }
+
+      // Get order total.
+      $total = field_get_items('commerce_order', $order, 'commerce_order_total');
+
+      // Get sign string.
+      $sign = FALSE;
+      switch ($payment_method['settings']['security']['security_level']) {
+        case 1:
+          $sign = $payment_method['settings']['security']['merchant_control_constant'];
+          break;
+        case 2:
+          $sign = hash_hmac('md5', $payment_method['settings']['merchant_id'] . $total[0]['amount'] . $total[0]['currency_code'] . $order->order_id, pack("H*", $payment_method['settings']['security']['hmac_key']));
+          break;
+      }
+
+      // Pay button.
+      $form['pay'] = array(
+        '#type'       => 'submit',
+        '#value'      => t('Pay with Datatrans'),
+        '#prefix'     => '<div class="checkout-buttons">',
+        '#suffix'     => '</div>',
+        '#attributes' => array(
+          'id'               => 'paymentButton',
+          'class'            => array('checkout-continue'),
+          'data-merchant-id' => $payment_method['settings']['merchant_id'],
+          'data-amount'      => $total[0]['amount'],
+          'data-currency'    => $total[0]['currency_code'],
+          'data-reqtype'    => $payment_method['settings']['req_type'],
+          'data-refno'       => $order->order_id,
+          'data-language'    => $language->language,
+          'data-success-url' => url('commerce_datatrans/processing/' . $order->order_id . '/' . $pane_values['payment_method'] . '/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+          'data-error-url'   => url('commerce_datatrans/processing/' . $order->order_id . '/' . $pane_values['payment_method'] . '/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+          'data-cancel-url'  => url('commerce_datatrans/processing/' . $order->order_id . '/' . $pane_values['payment_method'] . '/' . $order->data['payment_redirect_key'], array('absolute' => TRUE)),
+          'data-sign'        => $sign,
+        ),
+        '#attached'   => array(
+          'js' => array(
+            array(
+              'data' => 'https://pilot.datatrans.biz/upp/payment/js/datatrans-1.0.0.js',
+              'type' => 'external',
+            ),
+            drupal_get_path('module', 'commerce_datatrans') . '/commerce_datatrans.js',
+          ),
+        ),
+      );
+
+      return $form;
+    }
+    else {
+      drupal_set_message(t('Payment is successful. Please proceed to the next step.'));
+    }
+  }
+}
+
+/**
+ * Moves an order ahead to the next page via an order update and redirect.
+ *
+ * Redirected payment methods are responsible for calling this method when
+ * receiving external notifications of successful payment.
+ *
+ * @param $order
+ *   An order object.
+ * @param $log
+ *   Optional log message to use when updating the order status in conjunction
+ *   with the redirect to the next checkout page.
+ */
+function commerce_datarans_redirect_pane_next_page($order, $log = '') {
+  // Load the order status object for the current order.
+  $order_status = commerce_order_status_load($order->status);
+
+  if ($order_status['state'] == 'checkout') {
+    $payment_page = commerce_checkout_page_load($order_status['checkout_page']);
+    $next_page = $payment_page['next_page'];
+
+    $order = commerce_order_status_update($order, 'checkout_' . $next_page, FALSE, NULL, $log);
+
+    // Inform modules of checkout completion if the next page is Completed.
+    if ($next_page == 'complete') {
+      commerce_checkout_complete($order);
+    }
+  }
+}
+
+/**
+ * Payment method callback: submit form validate.
+ */
+function commerce_datatrans_submit_form_validate($payment_method, $pane_form, $pane_values, $order, $form_parents = array()) {
+  if (!_commerce_datatrans_get_transaction($order, FALSE) && $payment_method['settings']['payment_mode'] == 'lightbox') {
+    form_set_error('commerce_payment', t('Please click on @pay button in order to proceed.', array('@pay' => t('Pay with Datatrans'))));
+    return FALSE;
+  }
 }
 
 /**
